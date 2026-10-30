@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 
@@ -25,6 +26,8 @@ class LLMGateway:
         tools: list[dict[str, Any]] | None = None,
         json_mode: bool = False,
     ) -> Any:
+        if self.settings.get("system", {}).get("local_only", True):
+            os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
         try:
             from litellm import completion
         except ImportError as exc:

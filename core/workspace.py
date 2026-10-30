@@ -59,13 +59,27 @@ def create_task_worktree(workspace: dict[str, Any], task_id: str, attempt: int) 
 
 def integrate_task(
     workspace: dict[str, Any], task_id: str, task_root: str,
-    allowed_scopes: list[str] | None = None,
+    allowed_scopes: list[str] | None = None, require_changes: bool = True,
 ) -> str | None:
     if workspace["mode"] == "shared":
         return None
     tracked = _git(task_root, "diff", "--name-only", "HEAD")
     untracked = _git(task_root, "ls-files", "--others", "--exclude-standard")
-    changed = {line for line in (tracked.stdout + untracked.stdout).splitlines() if line}
+    untracked_paths = {line for line in untracked.stdout.splitlines() if line}
+    generated = {
+        path for path in untracked_paths
+        if "__pycache__" in Path(path).parts or ".pytest_cache" in Path(path).parts
+        or path.endswith((".pyc", ".pyo")) or path in {".coverage"}
+    }
+    for relative_path in generated:
+        candidate = Path(task_root) / relative_path
+        if candidate.is_file():
+            candidate.unlink()
+    changed = {
+        line for line in tracked.stdout.splitlines() if line
+    } | (untracked_paths - generated)
+    if require_changes and not changed:
+        raise ValueError(f"Task {task_id} produced no scoped file changes")
     scopes = allowed_scopes or []
     outside = [
         path for path in changed
@@ -82,6 +96,8 @@ def integrate_task(
         raise RuntimeError(add.stderr.strip())
     staged = _git(task_root, "diff", "--cached", "--quiet")
     if staged.returncode == 0:
+        if require_changes:
+            raise ValueError(f"Task {task_id} produced no staged changes")
         return None
     commit = _git(
         task_root, "-c", "user.name=Local Multi-Agent", "-c",

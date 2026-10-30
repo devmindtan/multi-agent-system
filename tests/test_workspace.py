@@ -55,6 +55,20 @@ class WorkspaceTests(unittest.TestCase):
                 integrate_task(workspace, "scoped", str(worker), ["allowed.txt"])
             finalize_workspace(workspace, runtime_dir, "run-scope", False)
 
+    def test_empty_implementation_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as project_dir, tempfile.TemporaryDirectory() as runtime_dir:
+            project = Path(project_dir)
+            git(project, "init")
+            (project / "base.txt").write_text("base\n", encoding="utf-8")
+            git(project, "add", "base.txt")
+            git(project, "-c", "user.name=Test", "-c", "user.email=test@localhost",
+                "commit", "-m", "base")
+            workspace = create_run_workspace(str(project), runtime_dir, "run-empty")
+            worker = create_task_worktree(workspace, "empty", 1)
+            with self.assertRaisesRegex(ValueError, "no scoped file changes"):
+                integrate_task(workspace, "empty", worker, ["base.txt"])
+            finalize_workspace(workspace, runtime_dir, "run-empty", False)
+
 
 if __name__ == "__main__":
     unittest.main()

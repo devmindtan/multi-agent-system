@@ -96,13 +96,14 @@ def build_graph(
                     integrate_task(
                         state["workspace"], task.id, state["task_workspaces"][task.id],
                         task.write_scope or task.target_files,
+                        require_changes=task.kind in {"implement", "test", "integrate"},
                     )
                     task.status = "completed"
                     task.failure = None
                 except Exception as exc:
-                    task.status = "failed"
                     task.failure = str(exc)
                     result.artifact.error_log = str(exc)
+                    task.status = "pending" if result.attempt < task.max_attempts else "failed"
             elif result.attempt < task.max_attempts:
                 task.status = "pending"
                 task.failure = result.artifact.error_log

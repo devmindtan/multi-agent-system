@@ -9,4 +9,6 @@ Rules:
 - Prefer small exact patches over complete rewrites.
 - Run the listed verification commands when useful.
 - When a tool fails, inspect its result and correct the cause.
+- Never repeat a failed edit unchanged. If an exact patch fails, read the current
+  file and use write_file with the complete intended content.
 - Stop once the acceptance criteria are satisfied.

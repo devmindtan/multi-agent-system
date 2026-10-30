@@ -195,6 +195,9 @@ class ExecutorAgent(BaseAgent):
             schema for schema in TOOL_SCHEMAS
             if schema["function"]["name"] in profile.tools
         ]
+        last_call_fingerprint: str | None = None
+        consecutive_call_count = 0
+        failed_mutations: dict[tuple[str, str], int] = {}
         try:
             for _ in range(max_steps):
                 response = self.gateway.completion(
@@ -205,15 +208,66 @@ class ExecutorAgent(BaseAgent):
                 calls = _tool_calls(message)
                 if not calls:
                     break
+                stop_repeated_loop = False
                 for call in calls:
                     function = _field(call, "function")
                     name = _field(function, "name")
                     raw_arguments = _field(function, "arguments")
                     arguments = raw_arguments if isinstance(raw_arguments, dict) else json.loads(raw_arguments)
+                    fingerprint = json.dumps(
+                        {"name": name, "arguments": arguments}, sort_keys=True,
+                        ensure_ascii=False,
+                    )
+                    if fingerprint == last_call_fingerprint:
+                        consecutive_call_count += 1
+                    else:
+                        last_call_fingerprint = fingerprint
+                        consecutive_call_count = 1
+                    if consecutive_call_count > 2:
+                        artifact.summary = f"Stopped repeated tool loop for {name}"
+                        emit(self.sink, state["run_id"], "tool.loop_stopped", worker_id,
+                             task_id=task.id, tool=name)
+                        stop_repeated_loop = True
+                        break
                     try:
                         result = dispatch(name, arguments)
                     except Exception as exc:
-                        result = {"error": f"{type(exc).__name__}: {exc}"}
+                        error = f"{type(exc).__name__}: {exc}"
+                        if name in {"write_file", "patch_file"}:
+                            target = (name, str(arguments.get("relative_path", "")))
+                            failed_mutations[target] = failed_mutations.get(target, 0) + 1
+                            if isinstance(exc, PermissionError):
+                                error += (
+                                    ". This path is outside the current subtask. Do not edit it; "
+                                    "finish only the work inside the declared write scope."
+                                )
+                            else:
+                                error += (
+                                    ". Do not repeat the same failed edit. Read the current file "
+                                    "and use write_file with the complete intended content if an "
+                                    "exact patch is uncertain."
+                                )
+                            if failed_mutations[target] >= 2:
+                                if isinstance(exc, PermissionError):
+                                    artifact.summary = (
+                                        f"Stopped repeated out-of-scope edit for {target[1]}"
+                                    )
+                                else:
+                                    artifact.error_log = (
+                                        f"Stopped after {failed_mutations[target]} failed {name} "
+                                        f"calls for {target[1]}; change editing strategy on retry"
+                                    )
+                                emit(
+                                    self.sink, state["run_id"], "tool.loop_stopped", worker_id,
+                                    task_id=task.id, tool=name, error=error,
+                                )
+                                stop_repeated_loop = True
+                        result = {"error": error}
+                    else:
+                        if name in {"write_file", "patch_file"}:
+                            failed_mutations.pop(
+                                (name, str(arguments.get("relative_path", ""))), None
+                            )
                     messages.append(
                         {
                             "role": "tool",
@@ -222,6 +276,10 @@ class ExecutorAgent(BaseAgent):
                             "content": json.dumps(result, ensure_ascii=False),
                         }
                     )
+                    if stop_repeated_loop:
+                        break
+                if stop_repeated_loop:
+                    break
             else:
                 artifact.error_log = f"Executor exceeded {max_steps} tool-call steps"
         except Exception as exc:

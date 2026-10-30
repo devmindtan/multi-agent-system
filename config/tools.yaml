@@ -1,0 +1,31 @@
+commands:
+  allowed_executables:
+    - python
+    - python3
+    - pytest
+    - ruff
+    - mypy
+    - npm
+    - npx
+    - pnpm
+    - yarn
+    - node
+    - cargo
+    - go
+    - git
+  denied_arguments:
+    - --delete
+    - --force
+  timeout_seconds: 90
+
+filesystem:
+  ignored_directories:
+    - .git
+    - .venv
+    - venv
+    - node_modules
+    - __pycache__
+    - dist
+    - build
+  max_read_bytes: 1000000
+

@@ -1,0 +1,31 @@
+system:
+  max_retries_per_task: 3
+  default_timeout_seconds: 90
+  enforce_json_mode: true
+  max_executor_steps: 20
+  context_max_files: 500
+  context_max_depth: 6
+
+models:
+  planner:
+    provider: ollama
+    model_name: qwen2.5-coder:14b
+    api_base: http://localhost:11434
+    temperature: 0.1
+  executor:
+    provider: ollama
+    model_name: qwen2.5-coder:7b-instruct
+    api_base: http://localhost:11434
+    temperature: 0.2
+  reviewer:
+    provider: ollama
+    model_name: qwen2.5-coder:7b-instruct
+    api_base: http://localhost:11434
+    temperature: 0.0
+
+cloud_fallback:
+  enabled: false
+  provider: anthropic
+  model_name: claude-3-5-sonnet-20241022
+  api_key_env: ANTHROPIC_API_KEY
+

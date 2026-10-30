@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -44,9 +45,24 @@ def run_command(
 
     root = Path(project_root).resolve(strict=True)
     effective_timeout = timeout or int(command_config.get("timeout_seconds", 90))
+    sandboxed_arguments = arguments
+    if command_config.get("sandbox_with_bubblewrap", True):
+        bubblewrap = shutil.which("bwrap")
+        if bubblewrap:
+            sandboxed_arguments = [
+                bubblewrap, "--die-with-parent", "--ro-bind", "/", "/",
+                "--tmpfs", "/tmp", "--bind", str(root), str(root),
+                "--chdir", str(root), "--proc", "/proc", "--dev", "/dev",
+                "--setenv", "HOME", "/tmp/home", "--", *arguments,
+            ]
+        elif command_config.get("sandbox_required", False):
+            return {
+                "exit_code": -1, "stdout": "",
+                "stderr": "Command rejected: bubblewrap sandbox is required but unavailable",
+            }
     try:
         process = subprocess.run(
-            arguments,
+            sandboxed_arguments,
             cwd=root,
             capture_output=True,
             text=True,

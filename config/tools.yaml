@@ -1,4 +1,6 @@
 commands:
+  sandbox_with_bubblewrap: true
+  sandbox_required: false
   allowed_executables:
     - python
     - python3

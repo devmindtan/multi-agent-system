@@ -5,61 +5,24 @@ from __future__ import annotations
 from typing import Any
 
 from agents.base import BaseAgent
+from core.agent_profiles import AgentProfile
+from core.events import EventSink, emit
 from core.state import AgentGraphState
-from tools.bash_tools import run_command
-
-
-def verifier_node(state: AgentGraphState) -> dict[str, Any]:
-    index = state["current_task_index"]
-    task = state["plan"][index]
-    artifacts = state["artifacts"]
-    artifact = artifacts[-1]
-    result: dict[str, Any] | None = None
-    error = artifact.error_log
-    if not error and task.verification_command:
-        result = run_command(state["project_root"], task.verification_command)
-        artifact.command_outputs.append(
-            {"command": task.verification_command, "phase": "verifier", **result}
-        )
-        if result["exit_code"] != 0:
-            error = result["stderr"] or result["stdout"] or "Verification failed"
-
-    if error:
-        artifact.error_log = error
-        task.status = "failed"
-        retry_count = state["retry_count"] + 1
-        return {
-            "plan": state["plan"],
-            "artifacts": artifacts,
-            "retry_count": retry_count,
-            "verification_passed": False,
-            "review_feedback": error,
-        }
-
-    task.status = "completed"
-    next_index = index + 1 if index + 1 < len(state["plan"]) else index
-    return {
-        "plan": state["plan"],
-        "artifacts": artifacts,
-        "current_task_index": next_index,
-        "retry_count": 0,
-        "verification_passed": True,
-        "review_feedback": "",
-    }
-
-
-REVIEWER_PROMPT = """You are the final software quality reviewer. Check whether the
-completed task plan and execution evidence satisfy the original request and project
-rules. Reject only for a concrete correctness, scope, security, or verification gap.
-Return only JSON: {"status":"APPROVE"|"REJECT","reason":"concise reason"}.
-"""
 
 
 class ReviewerAgent(BaseAgent):
+    def __init__(self, gateway, profile: AgentProfile, sink: EventSink):
+        super().__init__(gateway)
+        self.profile = profile
+        self.sink = sink
+
     def __call__(self, state: AgentGraphState) -> dict[str, Any]:
-        failed = [task for task in state["plan"] if task.status == "failed"]
+        emit(self.sink, state["run_id"], "agent.started", "reviewer")
+        failed = [task for task in state["plan"] if task.status in {"failed", "blocked"}]
         if failed:
-            reason = state.get("review_feedback") or "A subtask exhausted its retry budget"
+            reason = "; ".join(f"{task.id}: {task.failure or task.status}" for task in failed)
+            emit(self.sink, state["run_id"], "review.completed", "reviewer",
+                 approved=False, reason=reason)
             return {
                 "review_approved": False,
                 "is_completed": False,
@@ -72,9 +35,9 @@ class ReviewerAgent(BaseAgent):
             for artifact in state["artifacts"]
         )
         response = self.gateway.completion(
-            "reviewer",
+            self.profile.model_role,
             [
-                {"role": "system", "content": REVIEWER_PROMPT},
+                {"role": "system", "content": self.profile.instructions()},
                 {
                     "role": "user",
                     "content": (
@@ -90,7 +53,18 @@ class ReviewerAgent(BaseAgent):
         approved = str(payload.get("status", "")).upper() == "APPROVE"
         reason = str(payload.get("reason", "No review reason supplied"))
         review_retry_count = state.get("review_retry_count", 0) + (0 if approved else 1)
+        if not approved and state["plan"]:
+            repair_task = state["plan"][-1]
+            if repair_task.attempts < repair_task.max_attempts:
+                repair_task.status = "pending"
+                repair_task.failure = f"Reviewer feedback: {reason}"
+            else:
+                repair_task.status = "failed"
+                repair_task.failure = f"Reviewer rejected after retry budget: {reason}"
+        emit(self.sink, state["run_id"], "review.completed", "reviewer",
+             approved=approved, reason=reason)
         return {
+            "plan": state["plan"],
             "review_approved": approved,
             "review_feedback": "" if approved else reason,
             "review_retry_count": review_retry_count,

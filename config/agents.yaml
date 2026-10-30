@@ -1,0 +1,31 @@
+agents:
+  supervisor:
+    model_role: planner
+    prompt: prompts/supervisor.md
+    tools: []
+    max_turns: 1
+  implementer:
+    model_role: executor
+    prompt: prompts/implementer.md
+    tools: [read_file, list_files, write_file, patch_file, run_command]
+    max_turns: 20
+  explorer:
+    model_role: executor
+    prompt: prompts/explorer.md
+    tools: [read_file, list_files, run_command]
+    max_turns: 12
+  tester:
+    model_role: executor
+    prompt: prompts/tester.md
+    tools: [read_file, list_files, write_file, patch_file, run_command]
+    max_turns: 16
+  integrator:
+    model_role: executor
+    prompt: prompts/integrator.md
+    tools: [read_file, list_files, write_file, patch_file, run_command]
+    max_turns: 12
+  reviewer:
+    model_role: reviewer
+    prompt: prompts/reviewer.md
+    tools: []
+    max_turns: 1
